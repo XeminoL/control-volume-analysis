@@ -1,4 +1,5 @@
-# control-volume-analysis
+> [!NOTE]
+> **Status:** This project is inactive and no longer updated.
 
 Measure water crossing a boundary you draw, then check the answer against the divergence inside it.
 
