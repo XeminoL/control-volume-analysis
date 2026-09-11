@@ -1,0 +1,753 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Control volume analysis</title>
+<style>
+  :root {
+    --deep: #070b12;
+    --ground: #0d1420;
+    --land: #2a2318;
+    --ink: #e8edf5;
+    --dim: #7d8899;
+    --fainter: #4a5463;
+    --rule: #1c2533;
+    --draw: #ff7a45;
+    --good: #4ade80;
+    --warn: #fbbf24;
+    --bad: #f87171;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--deep);
+    color: var(--ink);
+    font: 13px/1.5 "Segoe UI", system-ui, sans-serif;
+    overflow: hidden;
+  }
+  #stage { position: fixed; inset: 0; }
+  #map { display: block; width: 100%; height: 100%; cursor: crosshair; }
+
+  .plate {
+    position: fixed;
+    background: rgba(7, 11, 18, .82);
+    border: 1px solid var(--rule);
+    backdrop-filter: blur(6px);
+    padding: 13px 15px;
+  }
+
+  #title {
+    top: 0; left: 0; right: 0;
+    display: flex; align-items: baseline; gap: 14px;
+    border-width: 0 0 1px;
+    padding: 11px 18px;
+  }
+  #title h1 {
+    margin: 0;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+  }
+  #cursor {
+    margin-left: auto;
+    font-family: Consolas, monospace;
+    font-size: 11.5px;
+    color: var(--dim);
+    font-variant-numeric: tabular-nums;
+  }
+
+  #readout { top: 56px; left: 18px; width: 232px; }
+  #tools { bottom: 18px; left: 18px; width: 232px; padding: 11px 15px 13px; }
+  #scale { bottom: 18px; right: 18px; padding: 9px 13px; }
+
+  h2 {
+    margin: 0 0 9px;
+    font-size: 9.5px;
+    font-weight: 600;
+    letter-spacing: .15em;
+    text-transform: uppercase;
+    color: var(--fainter);
+  }
+  .block + .block { margin-top: 15px; padding-top: 13px; border-top: 1px solid var(--rule); }
+
+  .big {
+    font-family: Consolas, monospace;
+    font-size: 25px;
+    font-weight: 300;
+    letter-spacing: -.02em;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.15;
+  }
+  .unit { font-size: 10.5px; color: var(--fainter); letter-spacing: .09em; }
+
+  .line { display: flex; justify-content: space-between; gap: 10px; padding: 2.5px 0; }
+  .line dt { color: var(--dim); }
+  .line dd {
+    margin: 0;
+    font-family: Consolas, monospace;
+    font-variant-numeric: tabular-nums;
+    font-size: 12px;
+  }
+  dl { margin: 0; }
+
+  .gap { font-weight: 600; }
+  .gap.good { color: var(--good); }
+  .gap.warn { color: var(--warn); }
+  .empty { color: var(--fainter); margin: 0; font-family: Consolas, monospace; }
+  .sub { color: var(--fainter); font-size: 11px; margin-top: 4px; }
+
+  .flag {
+    margin-top: 10px;
+    padding: 7px 9px;
+    border-left: 2px solid var(--warn);
+    background: rgba(251, 191, 36, .08);
+    font-size: 11.5px;
+    color: var(--warn);
+  }
+  .flag.bad { border-color: var(--bad); background: rgba(248, 113, 113, .08); color: var(--bad); }
+
+  .layers { display: flex; gap: 5px; margin-bottom: 11px; }
+  .layers button {
+    flex: 1;
+    font: inherit;
+    font-size: 10px;
+    letter-spacing: .07em;
+    text-transform: uppercase;
+    padding: 5px 0;
+    color: var(--fainter);
+    background: none;
+    border: 1px solid var(--rule);
+    cursor: pointer;
+  }
+  .layers button[aria-pressed="true"] { color: var(--ink); border-color: #3a4656; background: rgba(255,255,255,.05); }
+
+  .acts { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
+  .acts button {
+    font: inherit;
+    font-size: 11.5px;
+    padding: 6px 0;
+    color: var(--ink);
+    background: rgba(255,255,255,.05);
+    border: 1px solid var(--rule);
+    cursor: pointer;
+  }
+  .acts button:hover:not(:disabled) { background: rgba(255,255,255,.1); }
+  .acts button:disabled { color: var(--fainter); cursor: default; background: none; }
+  .acts button.wide { grid-column: 1 / -1; }
+  .acts button.go:not(:disabled) { background: var(--draw); border-color: var(--draw); color: #1a0d06; font-weight: 600; }
+
+  #hint { margin: 9px 0 0; font-size: 11px; color: var(--fainter); min-height: 1.4em; }
+
+  .ramp { width: 132px; height: 5px; margin-bottom: 5px; }
+  .ticks { display: flex; justify-content: space-between; font-size: 10px; color: var(--fainter); font-family: Consolas, monospace; }
+</style>
+
+<div id="stage"><canvas id="map"></canvas></div>
+
+<div class="plate" id="title">
+  <h1>Control volume</h1>
+  <span id="cursor"></span>
+</div>
+
+<div class="plate" id="readout">
+  <div class="block">
+    <h2>Net flux</h2>
+    <div class="big" id="net">&mdash;</div>
+    <div class="unit">m²/s</div>
+    <div id="census"></div>
+  </div>
+  <div class="block" id="theorem-block">
+    <h2>Theorems</h2>
+    <div id="theorems"><p class="empty">&mdash;</p></div>
+  </div>
+  <div class="block" id="budget-block">
+    <h2>Error budget</h2>
+    <div id="budget"><p class="empty">&mdash;</p></div>
+  </div>
+</div>
+
+<div class="plate" id="tools">
+  <div class="layers">
+    <button id="layer-cells" aria-pressed="true">Cells</button>
+    <button id="layer-contours" aria-pressed="true">Contours</button>
+    <button id="layer-streams" aria-pressed="true">Flow</button>
+  </div>
+  <div class="acts">
+    <button id="close" class="go wide" disabled>Close and measure</button>
+    <button id="undo" disabled>Undo</button>
+    <button id="clear" disabled>Clear</button>
+    <button id="box">Example</button>
+    <button id="errors" disabled>Errors</button>
+  </div>
+  <p id="hint">Loading&hellip;</p>
+</div>
+
+<div class="plate" id="scale">
+  <canvas class="ramp" id="ramp" width="132" height="5"></canvas>
+  <div class="ticks"><span>0</span><span id="ramp-max">&mdash;</span></div>
+</div>
+
+<script>
+const COLD = [22, 42, 74];
+const MID = [32, 112, 148];
+const HOT = [122, 214, 208];
+const CONTOUR_LEVELS = 7;
+const STREAM_ROWS = 26;
+const STREAM_STEPS = 34;
+const STREAM_DT = 0.055;
+const ARROW_EVERY = 11;
+const GOOD_GAP = 0.01;
+const MIN_SPEED = 1e-4;
+
+const canvas = document.getElementById("map");
+const context = canvas.getContext("2d");
+
+let grid = null;
+let vertices = [];
+let closed = false;
+let hover = null;
+let lastResult = null;
+let view = null;
+let layers = { cells: true, contours: true, streams: true };
+
+function toPixel(lat, lon) {
+  return {
+    x: view.x + (lon - view.lonLow) * view.scaleX,
+    y: view.y + (view.latHigh - lat) * view.scaleY,
+  };
+}
+
+function toGeo(x, y) {
+  return [
+    view.latHigh - (y - view.y) / view.scaleY,
+    view.lonLow + (x - view.x) / view.scaleX,
+  ];
+}
+
+function resize() {
+  if (!grid) return;
+  const ratio = window.devicePixelRatio || 1;
+  canvas.width = Math.round(window.innerWidth * ratio);
+  canvas.height = Math.round(window.innerHeight * ratio);
+  context.setTransform(ratio, 0, 0, ratio, 0, 0);
+
+  const latLow = grid.latitudes[0];
+  const latHigh = grid.latitudes[grid.latitudes.length - 1];
+  const lonLow = grid.longitudes[0];
+  const lonHigh = grid.longitudes[grid.longitudes.length - 1];
+  const cosMid = Math.cos((latLow + latHigh) / 2 * Math.PI / 180);
+
+  const padLeft = 268;
+  const padRight = 40;
+  const padTop = 68;
+  const padBottom = 40;
+  const roomW = window.innerWidth - padLeft - padRight;
+  const roomH = window.innerHeight - padTop - padBottom;
+
+  const spanX = (lonHigh - lonLow) * cosMid;
+  const spanY = latHigh - latLow;
+  const scale = Math.min(roomW / spanX, roomH / spanY);
+
+  const width = spanX * scale;
+  const height = spanY * scale;
+  view = {
+    latLow, latHigh, lonLow, lonHigh,
+    scaleX: scale * cosMid,
+    scaleY: scale,
+    x: padLeft + (roomW - width) / 2,
+    y: padTop + (roomH - height) / 2,
+    width, height,
+  };
+  draw();
+}
+
+function ramp(t) {
+  const u = Math.max(0, Math.min(1, t));
+  const [a, b, k] = u < 0.5
+    ? [COLD, MID, u * 2]
+    : [MID, HOT, (u - 0.5) * 2];
+  return [
+    Math.round(a[0] + (b[0] - a[0]) * k),
+    Math.round(a[1] + (b[1] - a[1]) * k),
+    Math.round(a[2] + (b[2] - a[2]) * k),
+  ];
+}
+
+function speedAt(i, j) {
+  const east = grid.east[i][j];
+  const north = grid.north[i][j];
+  if (east === null || north === null) return null;
+  return Math.hypot(east, north);
+}
+
+function sample(lat, lon) {
+  const fi = (lat - view.latLow) / grid.dLat;
+  const fj = (lon - view.lonLow) / grid.dLon;
+  const i = Math.floor(fi);
+  const j = Math.floor(fj);
+  if (i < 0 || j < 0 || i + 1 >= grid.latitudes.length
+      || j + 1 >= grid.longitudes.length) return null;
+  const a = fi - i;
+  const b = fj - j;
+  let east = 0;
+  let north = 0;
+  for (const [di, dj, w] of [[0, 0, (1 - a) * (1 - b)], [0, 1, (1 - a) * b],
+                             [1, 0, a * (1 - b)], [1, 1, a * b]]) {
+    const e = grid.east[i + di][j + dj];
+    const n = grid.north[i + di][j + dj];
+    if (e === null || n === null) return null;
+    east += w * e;
+    north += w * n;
+  }
+  return [east, north];
+}
+
+function drawGround() {
+  context.fillStyle = getComputedStyle(document.body)
+    .getPropertyValue("--ground").trim();
+  context.fillRect(view.x, view.y, view.width, view.height);
+}
+
+function drawCells() {
+  const nLat = grid.latitudes.length;
+  const nLon = grid.longitudes.length;
+  const w = view.width / (nLon - 1) + 1;
+  const h = view.height / (nLat - 1) + 1;
+  for (let i = 0; i < nLat; i++) {
+    for (let j = 0; j < nLon; j++) {
+      const speed = speedAt(i, j);
+      const p = toPixel(grid.latitudes[i], grid.longitudes[j]);
+      if (speed === null) {
+        context.fillStyle = getComputedStyle(document.body)
+          .getPropertyValue("--land").trim();
+      } else {
+        const [r, g, b] = ramp(speed / grid.speedMax);
+        context.fillStyle = `rgb(${r},${g},${b})`;
+      }
+      context.fillRect(p.x - w / 2, p.y - h / 2, w, h);
+    }
+  }
+}
+
+function drawLandEdge() {
+  const nLat = grid.latitudes.length;
+  const nLon = grid.longitudes.length;
+  const w = view.width / (nLon - 1) + 1;
+  const h = view.height / (nLat - 1) + 1;
+  context.fillStyle = getComputedStyle(document.body)
+    .getPropertyValue("--land").trim();
+  for (let i = 0; i < nLat; i++) {
+    for (let j = 0; j < nLon; j++) {
+      if (speedAt(i, j) !== null) continue;
+      const p = toPixel(grid.latitudes[i], grid.longitudes[j]);
+      context.fillRect(p.x - w / 2, p.y - h / 2, w, h);
+    }
+  }
+}
+
+function drawContours() {
+  const nLat = grid.latitudes.length;
+  const nLon = grid.longitudes.length;
+  context.lineWidth = 1;
+  for (let level = 1; level <= CONTOUR_LEVELS; level++) {
+    const threshold = grid.speedMax * level / (CONTOUR_LEVELS + 1);
+    const shade = 0.2 + 0.55 * (level / CONTOUR_LEVELS);
+    context.strokeStyle = `rgba(180, 228, 240, ${shade * 0.5})`;
+    context.beginPath();
+    for (let i = 0; i < nLat - 1; i++) {
+      for (let j = 0; j < nLon - 1; j++) {
+        const corners = [speedAt(i, j), speedAt(i, j + 1),
+                         speedAt(i + 1, j + 1), speedAt(i + 1, j)];
+        if (corners.some(v => v === null)) continue;
+        const lats = [grid.latitudes[i], grid.latitudes[i],
+                      grid.latitudes[i + 1], grid.latitudes[i + 1]];
+        const lons = [grid.longitudes[j], grid.longitudes[j + 1],
+                      grid.longitudes[j + 1], grid.longitudes[j]];
+        const crossings = [];
+        for (let k = 0; k < 4; k++) {
+          const m = (k + 1) % 4;
+          const a = corners[k];
+          const b = corners[m];
+          if ((a > threshold) === (b > threshold)) continue;
+          const t = (threshold - a) / (b - a);
+          crossings.push(toPixel(lats[k] + t * (lats[m] - lats[k]),
+                                 lons[k] + t * (lons[m] - lons[k])));
+        }
+        for (let k = 0; k + 1 < crossings.length; k += 2) {
+          context.moveTo(crossings[k].x, crossings[k].y);
+          context.lineTo(crossings[k + 1].x, crossings[k + 1].y);
+        }
+      }
+    }
+    context.stroke();
+  }
+}
+
+function drawStreams() {
+  const spanLat = view.latHigh - view.latLow;
+  const spanLon = view.lonLow === undefined ? 0 : (grid.longitudes[grid.longitudes.length - 1] - view.lonLow);
+  const rows = STREAM_ROWS;
+  const cols = Math.round(STREAM_ROWS * (spanLon / spanLat));
+  context.lineWidth = 1.1;
+  context.lineCap = "round";
+
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const lat0 = view.latLow + spanLat * (r + 0.5) / rows;
+      const lon0 = view.lonLow + spanLon * (c + 0.5) / cols;
+      if (!sample(lat0, lon0)) continue;
+
+      const path = [];
+      let lat = lat0;
+      let lon = lon0;
+      for (let step = 0; step < STREAM_STEPS; step++) {
+        const uv = sample(lat, lon);
+        if (!uv) break;
+        const speed = Math.hypot(uv[0], uv[1]);
+        if (speed < MIN_SPEED) break;
+        path.push([lat, lon, speed]);
+        const cosLat = Math.cos(lat * Math.PI / 180);
+        lat += uv[1] * STREAM_DT;
+        lon += uv[0] * STREAM_DT / Math.max(cosLat, 0.2);
+      }
+      if (path.length < 4) continue;
+
+      for (let k = 0; k + 1 < path.length; k++) {
+        const a = toPixel(path[k][0], path[k][1]);
+        const b = toPixel(path[k + 1][0], path[k + 1][1]);
+        const fade = (k + 1) / path.length;
+        const bright = 0.16 + 0.5 * Math.min(path[k][2] / grid.speedMax, 1);
+        context.strokeStyle = `rgba(226, 244, 255, ${bright * fade})`;
+        context.beginPath();
+        context.moveTo(a.x, a.y);
+        context.lineTo(b.x, b.y);
+        context.stroke();
+      }
+
+      if ((r * cols + c) % ARROW_EVERY === 0 && path.length > 6) {
+        const tipIndex = path.length - 1;
+        const tip = toPixel(path[tipIndex][0], path[tipIndex][1]);
+        const prev = toPixel(path[tipIndex - 2][0], path[tipIndex - 2][1]);
+        const dx = tip.x - prev.x;
+        const dy = tip.y - prev.y;
+        const len = Math.hypot(dx, dy);
+        if (len > 0.5) {
+          const ux = dx / len;
+          const uy = dy / len;
+          context.strokeStyle = "rgba(226, 244, 255, .55)";
+          context.beginPath();
+          context.moveTo(tip.x, tip.y);
+          context.lineTo(tip.x - (ux * .87 + uy * .5) * 4.2,
+                         tip.y - (uy * .87 - ux * .5) * 4.2);
+          context.moveTo(tip.x, tip.y);
+          context.lineTo(tip.x - (ux * .87 - uy * .5) * 4.2,
+                         tip.y - (uy * .87 + ux * .5) * 4.2);
+          context.stroke();
+        }
+      }
+    }
+  }
+}
+
+function drawBoundary() {
+  if (!vertices.length) return;
+  const points = vertices.map(([lat, lon]) => toPixel(lat, lon));
+
+  if (closed) {
+    context.beginPath();
+    context.moveTo(points[0].x, points[0].y);
+    points.slice(1).forEach(p => context.lineTo(p.x, p.y));
+    context.closePath();
+    context.fillStyle = "rgba(255, 122, 69, .11)";
+    context.fill();
+  }
+
+  context.strokeStyle = "#ff7a45";
+  context.lineWidth = 1.8;
+  context.setLineDash(closed ? [] : [5, 4]);
+  context.beginPath();
+  context.moveTo(points[0].x, points[0].y);
+  points.slice(1).forEach(p => context.lineTo(p.x, p.y));
+  if (closed) context.closePath();
+  else if (hover) {
+    const h = toPixel(hover[0], hover[1]);
+    context.lineTo(h.x, h.y);
+  }
+  context.stroke();
+  context.setLineDash([]);
+
+  points.forEach((p, index) => {
+    context.beginPath();
+    context.arc(p.x, p.y, index === 0 ? 4.5 : 3, 0, Math.PI * 2);
+    context.fillStyle = index === 0 ? "#ff7a45" : "#070b12";
+    context.fill();
+    context.strokeStyle = "#ff7a45";
+    context.lineWidth = 1.6;
+    context.stroke();
+  });
+}
+
+function drawFrame() {
+  context.strokeStyle = getComputedStyle(document.body)
+    .getPropertyValue("--rule").trim();
+  context.lineWidth = 1;
+  context.strokeRect(view.x + .5, view.y + .5, view.width - 1, view.height - 1);
+}
+
+function draw() {
+  if (!grid || !view) return;
+  context.clearRect(0, 0, canvas.width, canvas.height);
+  drawGround();
+  if (layers.cells) drawCells();
+  if (layers.streams) drawStreams();
+  if (layers.contours) drawContours();
+  if (!layers.cells) drawLandEdge();
+  drawFrame();
+  drawBoundary();
+}
+
+function number(value, digits = 2) {
+  if (value === null || value === undefined || !isFinite(value)) return "—";
+  return value.toLocaleString("en-US", {
+    minimumFractionDigits: digits, maximumFractionDigits: digits,
+  });
+}
+
+function lines(pairs) {
+  return "<dl>" + pairs.map(([label, value]) =>
+    `<div class="line"><dt>${label}</dt><dd>${value}</dd></div>`).join("") + "</dl>";
+}
+
+function renderNet(result) {
+  const net = document.getElementById("net");
+  const census = document.getElementById("census");
+  if (!result) {
+    net.textContent = "—";
+    census.innerHTML = vertices.length
+      ? `<div class="sub">${vertices.length} vertices</div>` : "";
+    return;
+  }
+  if (!result.samples) {
+    net.textContent = "—";
+    census.innerHTML = `<p class="flag bad">All ${result.missing} samples on land.</p>`;
+    return;
+  }
+  net.textContent = number(result.net);
+  census.innerHTML =
+    lines([
+      ["Out", number(result.outflow)],
+      ["In", number(result.inflow)],
+      ["Area", number(result.area / 1e6, 0) + " km²"],
+      ["Coverage", (result.coverage * 100).toFixed(1) + "%"],
+    ]) +
+    (result.coverage < 0.999
+      ? `<p class="flag">${result.missing} samples on land. The gap measures the coastline, not the method.</p>`
+      : "");
+}
+
+function theoremBlock(title, pair, note) {
+  const relative = pair.relative;
+  const klass = relative === null ? "" : (relative < GOOD_GAP ? "good" : "warn");
+  const shown = relative === null ? "—" : (relative * 100).toFixed(3) + "%";
+  return lines([
+    [title, `<span class="gap ${klass}">${shown}</span>`],
+  ]) + `<div class="sub">${number(pair.boundary)} vs ${number(pair.interior)}${
+    note ? " · " + note : ""}</div>`;
+}
+
+function renderTheorems(result) {
+  const box = document.getElementById("theorems");
+  if (!result || !result.samples) {
+    box.innerHTML = `<p class="empty">&mdash;</p>`;
+    return;
+  }
+  box.innerHTML =
+    theoremBlock("Gauss", result.gauss,
+      `${result.cells} cells` + (result.skipped ? `, ${result.skipped} land` : "")) +
+    `<div style="height:9px"></div>` +
+    theoremBlock("Green", result.green, null);
+}
+
+function renderBudget(u) {
+  const box = document.getElementById("budget");
+  if (!u) {
+    box.innerHTML = `<p class="empty">&mdash;</p>`;
+    return;
+  }
+  box.innerHTML = lines([
+    ["Sensor", "±" + number(u.deviation, 0) +
+      ` <span class="unit">${(u.relative * 100).toFixed(1)}%</span>`],
+    ["Theorem", number(u.theoremGap, 2)],
+    ["Spacing", number(u.refinementChange, 2)],
+    ["Sign", u.signIsCertain
+      ? `<span class="gap good">certain</span>`
+      : `<span class="gap warn">undecided</span>`],
+  ]) + `<div class="sub">95% [${number(u.low, 0)}, ${number(u.high, 0)}]</div>`;
+}
+
+function setControls() {
+  document.getElementById("close").disabled = vertices.length < 3 || closed;
+  document.getElementById("undo").disabled = !vertices.length || closed;
+  document.getElementById("clear").disabled = !vertices.length;
+  document.getElementById("errors").disabled =
+    !closed || !lastResult || !lastResult.samples;
+}
+
+function setHint(text) {
+  document.getElementById("hint").textContent = text;
+}
+
+async function analyse(withUncertainty) {
+  const response = await fetch("/analyse", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ vertices, uncertainty: withUncertainty }),
+  });
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.error || "request failed");
+  return payload;
+}
+
+for (const name of ["cells", "contours", "streams"]) {
+  document.getElementById("layer-" + name).addEventListener("click", event => {
+    layers[name] = !layers[name];
+    event.currentTarget.setAttribute("aria-pressed", String(layers[name]));
+    draw();
+  });
+}
+
+document.getElementById("close").addEventListener("click", async () => {
+  closed = true;
+  draw();
+  setControls();
+  setHint("Measuring…");
+  try {
+    lastResult = await analyse(false);
+    renderNet(lastResult);
+    renderTheorems(lastResult);
+    setHint("");
+  } catch (exc) {
+    setHint(exc.message);
+  }
+  setControls();
+});
+
+document.getElementById("errors").addEventListener("click", async () => {
+  document.getElementById("errors").disabled = true;
+  setHint("2000 draws…");
+  try {
+    lastResult = await analyse(true);
+    renderBudget(lastResult.uncertainty);
+    setHint("");
+  } catch (exc) {
+    setHint(exc.message);
+  }
+  setControls();
+});
+
+document.getElementById("undo").addEventListener("click", () => {
+  vertices.pop();
+  renderNet(null);
+  draw();
+  setControls();
+});
+
+function reset() {
+  vertices = [];
+  closed = false;
+  lastResult = null;
+  renderNet(null);
+  renderTheorems(null);
+  renderBudget(null);
+  setHint("");
+  draw();
+  setControls();
+}
+
+document.getElementById("clear").addEventListener("click", reset);
+
+document.getElementById("box").addEventListener("click", () => {
+  reset();
+  const centre = [19.5, 107.0];
+  const radius = 0.5;
+  for (let k = 0; k < 24; k++) {
+    const angle = 2 * Math.PI * k / 24;
+    vertices.push([
+      centre[0] + radius * Math.sin(angle),
+      centre[1] + radius * Math.cos(angle) / Math.cos(centre[0] * Math.PI / 180),
+    ]);
+  }
+  renderNet(null);
+  draw();
+  setControls();
+  document.getElementById("close").click();
+});
+
+function eventPoint(event) {
+  const rect = canvas.getBoundingClientRect();
+  return [event.clientX - rect.left, event.clientY - rect.top];
+}
+
+canvas.addEventListener("click", event => {
+  if (closed || !grid) return;
+  const [x, y] = eventPoint(event);
+  if (x < view.x || x > view.x + view.width
+      || y < view.y || y > view.y + view.height) return;
+  vertices.push(toGeo(x, y));
+  renderNet(null);
+  draw();
+  setControls();
+});
+
+canvas.addEventListener("mousemove", event => {
+  if (!grid) return;
+  const [x, y] = eventPoint(event);
+  const [lat, lon] = toGeo(x, y);
+  const inside = x >= view.x && x <= view.x + view.width
+              && y >= view.y && y <= view.y + view.height;
+  const readout = document.getElementById("cursor");
+  if (inside) {
+    const uv = sample(lat, lon);
+    readout.textContent =
+      `${Math.abs(lat).toFixed(2)}°${lat < 0 ? "S" : "N"}  ` +
+      `${Math.abs(lon).toFixed(2)}°${lon < 0 ? "W" : "E"}` +
+      (uv ? `   ${Math.hypot(uv[0], uv[1]).toFixed(3)} m/s` : "   land");
+  } else {
+    readout.textContent = "";
+  }
+  if (!closed && vertices.length) {
+    hover = [lat, lon];
+    draw();
+  }
+});
+
+canvas.addEventListener("mouseleave", () => {
+  hover = null;
+  document.getElementById("cursor").textContent = "";
+  draw();
+});
+
+window.addEventListener("resize", resize);
+
+fetch("/grid").then(r => r.json()).then(payload => {
+  grid = payload;
+  grid.dLat = (grid.latitudes[grid.latitudes.length - 1] - grid.latitudes[0])
+    / (grid.latitudes.length - 1);
+  grid.dLon = (grid.longitudes[grid.longitudes.length - 1] - grid.longitudes[0])
+    / (grid.longitudes.length - 1);
+
+  const strip = document.getElementById("ramp");
+  const paint = strip.getContext("2d");
+  for (let x = 0; x < strip.width; x++) {
+    const [r, g, b] = ramp(x / (strip.width - 1));
+    paint.fillStyle = `rgb(${r},${g},${b})`;
+    paint.fillRect(x, 0, 1, strip.height);
+  }
+  document.getElementById("ramp-max").textContent =
+    grid.speedMax.toFixed(2) + " m/s";
+
+  resize();
+  setHint("Click to place points");
+  setControls();
+}).catch(() => setHint("Could not load the field"));
+</script>
