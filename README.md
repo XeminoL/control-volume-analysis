@@ -44,10 +44,3 @@ order 4 bicubic            1.594%          10.752%            11
 ---
 
 The cosine sits inside the latitude derivative. Area comes from `∮ R² sin φ dλ`, exact on a spherical band. Land is `nan`, never zero. Instrument error is applied to speed and bearing, not to components. Finite-difference steps follow the grid, because below one cell they measured interpolation noise. The optimiser sweeps before Newton, which otherwise finds a saddle.
-
-```
-field.py      
-analysis.py   
-era5.py      
-serve.py      
-```
