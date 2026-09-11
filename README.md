@@ -51,5 +51,3 @@ analysis.py
 era5.py      
 serve.py      
 ```
-
-An ERA5 month is 1,256 MB; one window costs 6 requests and 22.9 MB.
