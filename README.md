@@ -41,8 +41,6 @@ order 4 bilinear           2.078%          22.937%             7
 order 4 bicubic            1.594%          10.752%            11
 ```
 
-Best on every summary statistic, beaten on 13 of 24 individual boundaries. It also costs 8.40% of usable sample points, all within two cells of a coast.
-
 ---
 
 The cosine sits inside the latitude derivative. Area comes from `∮ R² sin φ dλ`, exact on a spherical band. Land is `nan`, never zero. Instrument error is applied to speed and bearing, not to components. Finite-difference steps follow the grid, because below one cell they measured interpolation noise. The optimiser sweeps before Newton, which otherwise finds a saddle.
