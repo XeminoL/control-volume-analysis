@@ -15,15 +15,7 @@ which comes from instrument noise rather than from the method.
 
 ## Running it
 
-`run` opens the map in a browser. `run lint` checks the source. Python 3.11 or
-newer; numpy and h5py are installed on first launch.
+`run` opens the map in a browser. `run lint` checks the source. 
 
 The bundled field is the Gulf of Tonkin, from [HYCOM](https://www.hycom.org/).
 A comparison against ERA5 is available but not required.
-
-## A few deliberate choices
-
-Land is carried as missing data rather than zero, so a coastline never reads as
-still water. Area is integrated over the spherical band instead of a flat
-rectangle. Instrument error enters through speed and bearing, which is how the
-sensor reports it, rather than through the components.
